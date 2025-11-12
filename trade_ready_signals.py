@@ -21,6 +21,7 @@ import pandas as pd
 
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
+from pandas.tseries.offsets import BDay
 
 from features import prepare_features
 from models import build_classifiers
@@ -79,15 +80,14 @@ def try_shap_values(model, X_train, X_row):
         # Try to extract estimator if pipeline
         estimator = getattr(model, "named_steps", {}).get(list(model.named_steps.keys())[-1], model)
 
-        # Select an explainer depending on type
-        if hasattr(estimator, "predict_proba") and estimator.__class__.__name__.lower().find("tree") >= 0:
+        # Only compute SHAP for tree-based estimators (fast). For others, skip and fall back.
+        est_name = estimator.__class__.__name__.lower()
+        tree_like_indicators = ("tree", "xgb", "lightgbm", "lgb", "randomforest", "hist")
+        if any(tok in est_name for tok in tree_like_indicators):
             expl = shap.TreeExplainer(estimator)
         else:
-            # Linear, kernel, or others
-            try:
-                expl = shap.Explainer(estimator, X_train)
-            except Exception:
-                expl = shap.KernelExplainer(estimator.predict_proba, shap.sample(X_train, 50))
+            # skip expensive kernel/linear explainers for non-tree models (e.g., SVM)
+            raise RuntimeError(f"SHAP skipped for non-tree estimator: {est_name}")
 
         vals = expl.shap_values(X_row)
         # shap returns list per class for some explainers, handle that
@@ -113,6 +113,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("csv", help="CSV file with historical data (daily).")
     parser.add_argument("--horizons", nargs="+", type=int, default=[1], help="Target horizons in days (1,2,...)")
+    parser.add_argument("--buy-threshold", type=float, default=0.55, help="Probability threshold above which to suggest BUY")
+    parser.add_argument("--sell-threshold", type=float, default=0.45, help="Probability threshold below which to suggest SELL")
+    parser.add_argument("--size", type=int, default=100, help="Suggested number of shares for copy-trade helper")
+    parser.add_argument("--perm-repeats", type=int, default=5, help="Number of repeats for permutation importance (smaller is faster)")
     parser.add_argument("--models", nargs="*", default=None, help="Which models to include (default: all from build_classifiers)")
     parser.add_argument("--no-shap", dest="shap", action="store_false", help="Disable SHAP and use permutation fallback")
     parser.add_argument("--train-if-missing", action="store_true", help="Train models if saved ones are not found (default: False)")
@@ -193,7 +197,7 @@ def main():
 
             if contrib is None:
                 # fallback to permutation importance on test set (global)
-                imp = compute_permutation_importance(model, X_test, y_test, n_repeats=10)
+                imp = compute_permutation_importance(model, X_test, y_test, n_repeats=args.perm_repeats)
                 if not imp.empty:
                     # normalize
                     imp = imp.reindex(feature_cols).fillna(0.0)
@@ -204,12 +208,45 @@ def main():
             # store contributions as comma-separated top features
             top_feats = ", ".join([f"{f}:{v:.4f}" for f, v in contrib.sort_values(key=lambda s: s.abs(), ascending=False).head(10).items()])
 
+            # compute the actual target calendar/business date for this horizon
+            try:
+                as_of_dt = pd.to_datetime(signal_date)
+                # remove tz if present and get date
+                try:
+                    as_of_dt = as_of_dt.tz_convert(None)
+                except Exception:
+                    try:
+                        as_of_dt = as_of_dt.tz_localize(None)
+                    except Exception:
+                        pass
+                as_of_date = as_of_dt.date()
+                target_date = (pd.to_datetime(as_of_date) + BDay(h)).date()
+            except Exception:
+                # fallback: use string offset if index isn't datetime
+                as_of_date = str(signal_date)
+                target_date = as_of_date
+
+            # simple copy-trade helper based on probability thresholds
+            prob = prob_row
+            if prob >= args.buy_threshold:
+                action = "BUY"
+                copy_trade = f"BUY {args.size} @market (prob={prob:.3f})"
+            elif prob <= args.sell_threshold:
+                action = "SELL"
+                copy_trade = f"SELL {args.size} @market (prob={prob:.3f})"
+            else:
+                action = "HOLD"
+                copy_trade = f"HOLD (prob={prob:.3f})"
+
             rows.append({
-                "date": str(signal_date),
+                "as_of_date": as_of_date.isoformat() if hasattr(as_of_date, 'isoformat') else str(as_of_date),
+                "target_date": target_date.strftime("%Y-%m-%d") if hasattr(target_date, 'strftime') else str(target_date),
                 "horizon_days": h,
                 "model": name,
                 "prob": prob_row,
                 "val_auc": val_auc,
+                "action": action,
+                "copy_trade": copy_trade,
                 "top_feature_contribs": top_feats,
             })
 
