@@ -1,0 +1,74 @@
+{
+  "rf": {
+    "params": {
+      "memory": null,
+      "steps": "[('scaler', StandardScaler()), ('clf', RandomForestClassifier(max_depth=3, random_state=42))]",
+      "transform_input": null,
+      "verbose": false,
+      "scaler": "StandardScaler()",
+      "clf": "RandomForestClassifier(max_depth=3, random_state=42)",
+      "scaler__copy": true,
+      "scaler__with_mean": true,
+      "scaler__with_std": true,
+      "clf__bootstrap": true,
+      "clf__ccp_alpha": 0.0,
+      "clf__class_weight": null,
+      "clf__criterion": "gini",
+      "clf__max_depth": 3,
+      "clf__max_features": "sqrt",
+      "clf__max_leaf_nodes": null,
+      "clf__max_samples": null,
+      "clf__min_impurity_decrease": 0.0,
+      "clf__min_samples_leaf": 1,
+      "clf__min_samples_split": 2,
+      "clf__min_weight_fraction_leaf": 0.0,
+      "clf__monotonic_cst": null,
+      "clf__n_estimators": 100,
+      "clf__n_jobs": null,
+      "clf__oob_score": false,
+      "clf__random_state": 42,
+      "clf__verbose": 0,
+      "clf__warm_start": false
+    },
+    "perf": {
+      "total_return": -0.01653456518495655,
+      "ann_ret": -0.003989681535554124,
+      "ann_vol": 0.004502143911542872,
+      "sharpe": -0.8861737016724709
+    }
+  },
+  "logistic": {
+    "params": {
+      "memory": null,
+      "steps": "[('scaler', StandardScaler()), ('clf', LogisticRegression(C=0.01, max_iter=200))]",
+      "transform_input": null,
+      "verbose": false,
+      "scaler": "StandardScaler()",
+      "clf": "LogisticRegression(C=0.01, max_iter=200)",
+      "scaler__copy": true,
+      "scaler__with_mean": true,
+      "scaler__with_std": true,
+      "clf__C": 0.01,
+      "clf__class_weight": null,
+      "clf__dual": false,
+      "clf__fit_intercept": true,
+      "clf__intercept_scaling": 1,
+      "clf__l1_ratio": null,
+      "clf__max_iter": 200,
+      "clf__multi_class": "deprecated",
+      "clf__n_jobs": null,
+      "clf__penalty": "l2",
+      "clf__random_state": null,
+      "clf__solver": "lbfgs",
+      "clf__tol": 0.0001,
+      "clf__verbose": 0,
+      "clf__warm_start": false
+    },
+    "perf": {
+      "total_return": -0.10399827604278533,
+      "ann_ret": -0.02598641699745874,
+      "ann_vol": 0.005719350734196368,
+      "sharpe": -4.5435956291479505
+    }
+  }
+}
