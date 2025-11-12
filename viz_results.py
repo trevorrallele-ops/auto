@@ -58,7 +58,7 @@ def plot_equity_curves(equities: dict, out_path: str):
     plt.close()
 
 
-def run(path: str = "GLD_daily.csv"):
+def run(path: str = "GLD_daily.csv", full_retrain: bool = False):
     print("Preparing features from:", path)
     X, y, df = prepare_features(path)
 
@@ -71,11 +71,14 @@ def run(path: str = "GLD_daily.csv"):
 
     print("Train/Test sizes:", X_train.shape[0], X_test.shape[0])
 
+    # Ensure models dir exists
+    os.makedirs("models", exist_ok=True)
+
     # Prefer loading saved models from models/ if present
     trained = {}
     results = {}
     model_files = glob.glob("models/*.joblib")
-    if model_files:
+    if model_files and not full_retrain:
         print("Found saved models in models/ — loading them for visualization")
         for mf in model_files:
             name = os.path.splitext(os.path.basename(mf))[0]
@@ -112,7 +115,18 @@ def run(path: str = "GLD_daily.csv"):
                 print(f"Failed training {name}: {e}")
         # Note: results currently contains metrics for models we trained here; saved-model metrics may be missing
     else:
-        trained, results = train_and_evaluate(X_train, y_train, X_test, y_test)
+        # Full retrain requested or no saved models: train all models and save them
+        print("No saved models found or full retrain requested — training all models now")
+        trained_all, results_all = train_and_evaluate(X_train, y_train, X_test, y_test)
+        # save each trained model to models/
+        for name, mdl in trained_all.items():
+            try:
+                joblib.dump(mdl, f"models/{name}.joblib")
+                print(f"Saved model: models/{name}.joblib")
+            except Exception as e:
+                print(f"Failed to save model {name}: {e}")
+        trained.update(trained_all)
+        results.update(results_all)
 
     price_col = "Adj Close" if "Adj Close" in df.columns else "Close"
     price = df[price_col].loc[X_test.index]
@@ -160,9 +174,13 @@ def run(path: str = "GLD_daily.csv"):
 
 
 if __name__ == "__main__":
-    import sys
-    csv = sys.argv[1] if len(sys.argv) > 1 else "GLD_daily.csv"
-    if not os.path.exists(csv):
-        print(f"CSV not found: {csv}. Please place GLD_daily.csv in the working folder.")
+    import argparse
+    parser = argparse.ArgumentParser(description="Visualize GLD ML results and equity curves")
+    parser.add_argument("csv", nargs="?", default="GLD_daily.csv", help="path to GLD CSV")
+    parser.add_argument("--full-retrain", action="store_true", help="retrain and save all models (can be slow)")
+    args = parser.parse_args()
+
+    if not os.path.exists(args.csv):
+        print(f"CSV not found: {args.csv}. Please place GLD_daily.csv in the working folder.")
     else:
-        run(csv)
+        run(args.csv, full_retrain=args.full_retrain)
