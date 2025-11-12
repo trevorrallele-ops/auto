@@ -44,7 +44,9 @@ def backtest_advanced(prices: pd.Series,
                       slippage: float = 0.0005,
                       leverage: float = 1.0,
                       long_short: bool = False,
-                      sizing_method: str = "proportional"):
+                      sizing_method: str = "proportional",
+                      volatility_target: float | None = None,
+                      stop_loss: float | None = None):
     """More realistic daily backtest.
 
     - signals: expected to be in {-1,0,1} for short/flat/long if long_short True, else {0,1}
@@ -70,20 +72,26 @@ def backtest_advanced(prices: pd.Series,
         pos = signals.clip(0, 1).astype(float)
 
     # size positions
-    if sizing_method == "proportional":
-        # map prob [0.5,1] to [0,1] when binary; if long_short, center at 0
-        if long_short:
-            size = (prob - 0.5) * 2.0
-        else:
-            size = (prob - 0.5) * 2.0
-        size = size.clip(-1, 1)
+    if volatility_target is not None:
+        # use realized vol to scale position
+        ret_series = prices.pct_change().fillna(0)
+        realized_vol = ret_series.rolling(14).std() * (252 ** 0.5)
+        size = (volatility_target / (realized_vol + 1e-9)).clip(0, leverage)
         position = pos * size
     else:
-        position = pos
-
-    # apply leverage cap
-    position = position * leverage
-    position = position.clip(-leverage, leverage)
+        if sizing_method == "proportional":
+            # map prob [0.5,1] to [0,1] when binary; if long_short, center at 0
+            if prob is None:
+                size = pd.Series(1.0, index=pos.index)
+            else:
+                size = (prob - 0.5) * 2.0
+            size = size.clip(-1, 1)
+            position = pos * size
+        else:
+            position = pos
+        # apply leverage cap
+        position = position * leverage
+        position = position.clip(-leverage, leverage)
 
     # returns
     ret = prices.pct_change().fillna(0)
@@ -99,6 +107,11 @@ def backtest_advanced(prices: pd.Series,
     slip = turnover * slippage
 
     strat_ret = daily_pnl - tc - slip
+
+    # apply stop-loss: if a day's pnl is less than -stop_loss, cut it to -stop_loss (clip)
+    if stop_loss is not None:
+        # interpret stop_loss as fractional loss per day (e.g., 0.05 = -5%)
+        strat_ret = strat_ret.clip(lower=-stop_loss)
 
     cum = (1 + strat_ret).cumprod()
     total_return = cum.iloc[-1] - 1

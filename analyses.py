@@ -170,6 +170,7 @@ def ensemble_eval(csv: str = "GLD_daily.csv"):
     with open("figures/analysis_ensemble_perf.json", "w") as f:
         json.dump(perf, f, indent=2)
     # also append ensemble metrics to a summary CSV if results_summary exists
+    # also append ensemble metrics to a summary CSV (merge with results_summary if present)
     try:
         if os.path.exists('figures/results_summary.csv'):
             base = pd.read_csv('figures/results_summary.csv', index_col=0)
@@ -181,10 +182,11 @@ def ensemble_eval(csv: str = "GLD_daily.csv"):
         for c in ens_row.index:
             if c not in base.columns:
                 base[c] = pd.NA
+        # if base has extra columns, keep them but fill missing with NA for ensemble
         base.loc['ensemble'] = [ens_row.get(c, pd.NA) for c in base.columns]
         base.to_csv('figures/analysis_summary.csv')
-    except Exception:
-        pass
+    except Exception as e:
+        print('Failed to update analysis_summary.csv:', e)
     return perf, bt_df, calib
 
 
@@ -223,14 +225,27 @@ def run_all(csv: str = "GLD_daily.csv"):
         plt.savefig('figures/analysis_mlp_permutation.png')
         plt.close()
 
-    # walk-forward CV for mlp
-    print("Running walk-forward CV for MLP...")
+    # nested walk-forward CV aggregated across multiple models
+    print("Running nested walk-forward CV across all classifiers...")
     try:
-        wfcv = walk_forward_cv(csv, estimator_name='mlp', n_splits=5)
-        pd.DataFrame(wfcv).to_csv('figures/analysis_mlp_walkforward.csv', index=False)
-        print('Walk-forward CV saved to figures/analysis_mlp_walkforward.csv')
+        from models import build_classifiers
+        clf_map = build_classifiers()
+        all_wfcv = []
+        for name in clf_map.keys():
+            try:
+                print(f"WFCV for {name}...")
+                per_fold = walk_forward_cv(csv, estimator_name=name, n_splits=5)
+                for r in per_fold:
+                    r['model'] = name
+                all_wfcv.extend(per_fold)
+            except Exception as e:
+                print(f"WFCV failed for {name}: {e}")
+        if all_wfcv:
+            df_wfcv = pd.DataFrame(all_wfcv)
+            df_wfcv.to_csv('figures/analysis_all_models_walkforward.csv', index=False)
+            print('Saved aggregated walk-forward CV to figures/analysis_all_models_walkforward.csv')
     except Exception as e:
-        print('Walk-forward CV failed:', e)
+        print('Nested walk-forward CV failed:', e)
 
     # profit contribution for ensemble
     try:
