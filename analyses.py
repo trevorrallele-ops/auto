@@ -22,6 +22,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import joblib
+from sklearn.base import clone
 
 from features import prepare_features
 from backtest import backtest_advanced
@@ -49,7 +50,7 @@ def backtest_position(prices: pd.Series, position: pd.Series, transaction_cost: 
     return df, perf
 
 
-def permutation_test(price: pd.Series, signal: pd.Series, n_iter: int = 1000, seed: int = 42):
+def permutation_test(price: pd.Series, signal: pd.Series, n_iter: int = 2000, seed: int = 42):
     """Shuffle the signal and compute distribution of total returns; return p-value."""
     rng = np.random.default_rng(seed)
     observed_df, observed_perf = backtest_position(price, signal)
@@ -80,11 +81,12 @@ def walk_forward_cv(csv: str = "GLD_daily.csv", estimator_name: str = "mlp", n_s
     tscv = TimeSeriesSplit(n_splits=n_splits)
     per_fold = []
     fold_idx = 0
+    ensure_dir('figures/wfcv')
     for train_idx, test_idx in tscv.split(X):
         fold_idx += 1
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
         y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
-        mdl = joblib.loads(joblib.dumps(clf_template))  # deep copy
+        mdl = clone(clf_template)
         mdl.fit(X_train, y_train)
         if hasattr(mdl, "predict_proba"):
             proba = mdl.predict_proba(X_test)[:, 1]
@@ -94,7 +96,9 @@ def walk_forward_cv(csv: str = "GLD_daily.csv", estimator_name: str = "mlp", n_s
         price_col = "Adj Close" if "Adj Close" in df.columns else "Close"
         price = df[price_col].loc[X_test.index]
         bt_df, perf = backtest_position(price, sig)
-        per_fold.append({"fold": fold_idx, **perf})
+        # save fold-level pnl series
+        bt_df.to_csv(f'figures/wfcv_fold_{fold_idx}.csv')
+        per_fold.append({"fold": fold_idx, **perf, "pnl_file": f'figures/wfcv_fold_{fold_idx}.csv'})
     return per_fold
 
 
@@ -165,6 +169,22 @@ def ensemble_eval(csv: str = "GLD_daily.csv"):
     proba_df.to_csv("figures/analysis_ensemble_model_probs.csv")
     with open("figures/analysis_ensemble_perf.json", "w") as f:
         json.dump(perf, f, indent=2)
+    # also append ensemble metrics to a summary CSV if results_summary exists
+    try:
+        if os.path.exists('figures/results_summary.csv'):
+            base = pd.read_csv('figures/results_summary.csv', index_col=0)
+        else:
+            base = pd.DataFrame()
+        ens_row = pd.Series(perf, name='ensemble')
+        base = base.copy()
+        # ensure consistent columns
+        for c in ens_row.index:
+            if c not in base.columns:
+                base[c] = pd.NA
+        base.loc['ensemble'] = [ens_row.get(c, pd.NA) for c in base.columns]
+        base.to_csv('figures/analysis_summary.csv')
+    except Exception:
+        pass
     return perf, bt_df, calib
 
 
@@ -191,7 +211,7 @@ def run_all(csv: str = "GLD_daily.csv"):
         price = df[price_col].loc[X_test.index]
         proba = mdl.predict_proba(X_test)[:, 1] if hasattr(mdl, "predict_proba") else None
         signal = pd.Series((proba > 0.5).astype(int) if proba is not None else mdl.predict(X_test), index=X_test.index)
-        obs, sims, pval = permutation_test(price, signal, n_iter=500)
+        obs, sims, pval = permutation_test(price, signal, n_iter=2000)
         print(f"MLP observed total_return={obs:.4f}, permutation p-value={pval:.4f}")
         # save sim histogram
         plt.figure(figsize=(6, 3))
