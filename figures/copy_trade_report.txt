@@ -1,0 +1,47 @@
+Copy-Trade Report
+=================
+
+Target date: 2025-10-30
+- Model: logistic | Horizon: 1 | Action: BUY  | Prob: 0.587 | Size: 0 | BUY 100 @market (prob=0.587)
+- Model: rf       | Horizon: 1 | Action: HOLD | Prob: 0.460 | Size: 0 | HOLD (prob=0.460)
+- Model: svm      | Horizon: 1 | Action: HOLD | Prob: 0.528 | Size: 0 | HOLD (prob=0.528)
+- Model: knn      | Horizon: 1 | Action: SELL | Prob: 0.200 | Size: 0 | SELL 100 @market (prob=0.200)
+- Model: mlp      | Horizon: 1 | Action: SELL | Prob: 0.016 | Size: 0 | SELL 100 @market (prob=0.016)
+- Model: xgb      | Horizon: 1 | Action: SELL | Prob: 0.355 | Size: 0 | SELL 100 @market (prob=0.355)
+- Model: lgb      | Horizon: 1 | Action: HOLD | Prob: 0.529 | Size: 0 | HOLD (prob=0.529)
+
+Target date: 2025-10-31
+- Model: lgb      | Horizon: 2 | Action: SELL | Prob: 0.435 | Size: 0 | SELL 100 @market (prob=0.435)
+- Model: xgb      | Horizon: 2 | Action: BUY  | Prob: 0.616 | Size: 0 | BUY 100 @market (prob=0.616)
+- Model: mlp      | Horizon: 2 | Action: HOLD | Prob: 0.499 | Size: 0 | HOLD (prob=0.499)
+- Model: rf       | Horizon: 2 | Action: SELL | Prob: 0.370 | Size: 0 | SELL 100 @market (prob=0.370)
+- Model: svm      | Horizon: 2 | Action: HOLD | Prob: 0.516 | Size: 0 | HOLD (prob=0.516)
+- Model: logistic | Horizon: 2 | Action: SELL | Prob: 0.415 | Size: 0 | SELL 100 @market (prob=0.415)
+- Model: knn      | Horizon: 2 | Action: SELL | Prob: 0.200 | Size: 0 | SELL 100 @market (prob=0.200)
+
+Target date: 2025-11-03
+- Model: xgb      | Horizon: 3 | Action: BUY  | Prob: 0.827 | Size: 0 | BUY 100 @market (prob=0.827)
+- Model: lgb      | Horizon: 3 | Action: HOLD | Prob: 0.484 | Size: 0 | HOLD (prob=0.484)
+- Model: mlp      | Horizon: 3 | Action: SELL | Prob: 0.106 | Size: 0 | SELL 100 @market (prob=0.106)
+- Model: knn      | Horizon: 3 | Action: SELL | Prob: 0.400 | Size: 0 | SELL 100 @market (prob=0.400)
+- Model: svm      | Horizon: 3 | Action: HOLD | Prob: 0.513 | Size: 0 | HOLD (prob=0.513)
+- Model: rf       | Horizon: 3 | Action: SELL | Prob: 0.390 | Size: 0 | SELL 100 @market (prob=0.390)
+- Model: logistic | Horizon: 3 | Action: SELL | Prob: 0.368 | Size: 0 | SELL 100 @market (prob=0.368)
+
+Target date: 2025-11-04
+- Model: lgb      | Horizon: 4 | Action: SELL | Prob: 0.151 | Size: 0 | SELL 100 @market (prob=0.151)
+- Model: mlp      | Horizon: 4 | Action: SELL | Prob: 0.000 | Size: 0 | SELL 100 @market (prob=0.000)
+- Model: knn      | Horizon: 4 | Action: SELL | Prob: 0.000 | Size: 0 | SELL 100 @market (prob=0.000)
+- Model: xgb      | Horizon: 4 | Action: SELL | Prob: 0.271 | Size: 0 | SELL 100 @market (prob=0.271)
+- Model: rf       | Horizon: 4 | Action: SELL | Prob: 0.230 | Size: 0 | SELL 100 @market (prob=0.230)
+- Model: logistic | Horizon: 4 | Action: HOLD | Prob: 0.476 | Size: 0 | HOLD (prob=0.476)
+- Model: svm      | Horizon: 4 | Action: HOLD | Prob: 0.488 | Size: 0 | HOLD (prob=0.488)
+
+Target date: 2025-11-05
+- Model: xgb      | Horizon: 5 | Action: BUY  | Prob: 0.970 | Size: 0 | BUY 100 @market (prob=0.970)
+- Model: logistic | Horizon: 5 | Action: SELL | Prob: 0.403 | Size: 0 | SELL 100 @market (prob=0.403)
+- Model: rf       | Horizon: 5 | Action: BUY  | Prob: 0.560 | Size: 0 | BUY 100 @market (prob=0.560)
+- Model: svm      | Horizon: 5 | Action: HOLD | Prob: 0.492 | Size: 0 | HOLD (prob=0.492)
+- Model: knn      | Horizon: 5 | Action: BUY  | Prob: 0.600 | Size: 0 | BUY 100 @market (prob=0.600)
+- Model: mlp      | Horizon: 5 | Action: SELL | Prob: 0.000 | Size: 0 | SELL 100 @market (prob=0.000)
+- Model: lgb      | Horizon: 5 | Action: BUY  | Prob: 0.701 | Size: 0 | BUY 100 @market (prob=0.701)

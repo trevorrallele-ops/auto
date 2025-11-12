@@ -116,6 +116,9 @@ def main():
     parser.add_argument("--buy-threshold", type=float, default=0.55, help="Probability threshold above which to suggest BUY")
     parser.add_argument("--sell-threshold", type=float, default=0.45, help="Probability threshold below which to suggest SELL")
     parser.add_argument("--size", type=int, default=100, help="Suggested number of shares for copy-trade helper")
+    parser.add_argument("--size-mode", choices=["fixed","vol"], default="fixed", help="Sizing mode: fixed shares or volatility-based (uses ATR)")
+    parser.add_argument("--equity", type=float, default=100000.0, help="Account equity used for vol-based sizing")
+    parser.add_argument("--target-risk", type=float, default=0.005, help="Fractional risk per trade for vol-based sizing (e.g., 0.005 = 0.5%)")
     parser.add_argument("--perm-repeats", type=int, default=5, help="Number of repeats for permutation importance (smaller is faster)")
     parser.add_argument("--models", nargs="*", default=None, help="Which models to include (default: all from build_classifiers)")
     parser.add_argument("--no-shap", dest="shap", action="store_false", help="Disable SHAP and use permutation fallback")
@@ -230,12 +233,34 @@ def main():
             prob = prob_row
             if prob >= args.buy_threshold:
                 action = "BUY"
-                copy_trade = f"BUY {args.size} @market (prob={prob:.3f})"
             elif prob <= args.sell_threshold:
                 action = "SELL"
-                copy_trade = f"SELL {args.size} @market (prob={prob:.3f})"
             else:
                 action = "HOLD"
+
+            # suggested size: fixed or volatility-based using ATR
+            suggested_size = args.size
+            try:
+                # df_all contains ATR as 'atr_14' from prepare_features
+                atr_val = None
+                # X_row index corresponds to df_all index
+                row_idx = X_row.index[0]
+                if 'atr_14' in df_all.columns:
+                    atr_val = float(df_all.loc[row_idx, 'atr_14'])
+                price_val = float(X_row[ X_row.columns[0] ]) if X_row.shape[1] > 0 else None
+                # better get price column from df_all
+                price_col = 'Adj Close' if 'Adj Close' in df_all.columns else 'Close'
+                price_val = float(df_all.loc[row_idx, price_col])
+                if args.size_mode == 'vol' and atr_val is not None and atr_val > 0:
+                    # per-share dollar risk approximated by ATR
+                    risk_per_trade = args.equity * args.target_risk
+                    suggested_size = int(max(1, (risk_per_trade) / (atr_val)))
+            except Exception:
+                suggested_size = args.size
+
+            if action == 'BUY' or action == 'SELL':
+                copy_trade = f"{action} {suggested_size} @market (prob={prob:.3f})"
+            else:
                 copy_trade = f"HOLD (prob={prob:.3f})"
 
             rows.append({
@@ -246,6 +271,7 @@ def main():
                 "prob": prob_row,
                 "val_auc": val_auc,
                 "action": action,
+                "suggested_size": suggested_size,
                 "copy_trade": copy_trade,
                 "top_feature_contribs": top_feats,
             })
