@@ -39,14 +39,15 @@ python run_experiments.py GLD_daily.csv
 
 This trains the light models, runs simple backtests, and writes `results_summary.csv` / `results_summary.json` and some plots to `figures/`.
 
-2. Recommended full-run (train all models, produce trade-ready signals)
+
+2. Recommended full-run (train all models, produce trade-ready signals, consensus orders, and stop/limit prices)
 
 ```bash
 # train and produce visualizations (this may retrain heavy models and take several minutes)
 python viz_results.py GLD_daily.csv --full-retrain
 
-# then produce trade-ready signals (1..5 horizons) with SHAP where available
-python trade_ready_signals.py GLD_daily.csv --horizons 1 2 3 4 5 --train-if-missing --perm-repeats 5
+# produce trade-ready signals for 1..15 business-day horizons, with stop/limit prices and consensus broker orders
+python trade_ready_signals.py GLD_daily.csv --horizons 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 --train-if-missing --perm-repeats 5 --stop-mult 1.5 --limit-mult 2.0 --consensus --symbol GLD
 
 # create merged analysis & textual report for next 5 days
 python make_analysis_summary.py --days 5
@@ -79,6 +80,7 @@ This script will run ensemble evaluation, MLP permutation tests, nested walk-for
 python diagnose_mlp.py GLD_daily.csv
 ```
 
+
 4. Where outputs are and what they mean
 
 - `figures/results_summary.csv` — per-model backtest & classification metrics (accuracy, f1, auc, total_return, ann_ret, ann_vol, sharpe). Use it to quickly compare historical simulated performance.
@@ -90,6 +92,8 @@ python diagnose_mlp.py GLD_daily.csv
   - `prob` — predicted probability (0..1) of the target being 'up'
   - `val_auc` — validation AUC on held-out split
   - `action` — derived label (BUY/SELL/HOLD) using thresholds
+  - `stop_price` — suggested stop price (ATR-based, uses `--stop-mult`)
+  - `limit_price` — suggested limit/target price (ATR-based, uses `--limit-mult`)
   - `suggested_size` — numeric size (shares) computed either fixed or `vol` (ATR) mode
   - `copy_trade` — one-line copy-paste instruction
   - `top_feature_contribs` — top features contributing to the prediction (SHAP or permutation)
@@ -97,6 +101,7 @@ python diagnose_mlp.py GLD_daily.csv
 - `figures/analysis_summary.csv` — merged table combining `results_summary.csv` metrics with the signals (handy for filtering signals by model historical performance)
 - `figures/copy_trade_report.txt` — human-readable, grouped report of upcoming orders
 - `figures/broker_orders.csv` — broker-ready orders (symbol, side, qty, order_type, target_date, model)
+- `figures/broker_orders_consensus.csv` — consensus broker orders (one row per target_date, side/qty/stop/limit aggregated across models)
 - `figures/candles_{year}.png` — yearly candlestick PNGs with BUY/SELL markers plotted at target dates
 
 5. How to read the results — a short primer

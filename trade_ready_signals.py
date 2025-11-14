@@ -121,6 +121,10 @@ def main():
     parser.add_argument("--target-risk", type=float, default=0.005, help="Fractional risk per trade for vol-based sizing (e.g., 0.005 = 0.5%)")
     parser.add_argument("--perm-repeats", type=int, default=5, help="Number of repeats for permutation importance (smaller is faster)")
     parser.add_argument("--models", nargs="*", default=None, help="Which models to include (default: all from build_classifiers)")
+    parser.add_argument("--symbol", type=str, default=None, help="Ticker/symbol to include in broker export (optional)")
+    parser.add_argument("--stop-mult", type=float, default=1.5, help="Multiplier for ATR to compute suggested stop price")
+    parser.add_argument("--limit-mult", type=float, default=2.0, help="Multiplier for ATR to compute suggested limit/target price")
+    parser.add_argument("--consensus", action="store_true", help="Also write a consensus broker_orders_consensus.csv with one row per target_date")
     parser.add_argument("--no-shap", dest="shap", action="store_false", help="Disable SHAP and use permutation fallback")
     parser.add_argument("--train-if-missing", action="store_true", help="Train models if saved ones are not found (default: False)")
     parser.add_argument("--out", default="figures/trade_ready_signals.csv", help="Output CSV path")
@@ -263,6 +267,22 @@ def main():
             else:
                 copy_trade = f"HOLD (prob={prob:.3f})"
 
+            # compute suggested stop/limit prices using ATR multipliers
+            stop_price = None
+            limit_price = None
+            try:
+                if atr_val is not None and price_val is not None:
+                    if action == 'BUY':
+                        stop_price = float(max(0.0, price_val - args.stop_mult * atr_val))
+                        limit_price = float(price_val + args.limit_mult * atr_val)
+                    elif action == 'SELL':
+                        # for sell (short) stop is above entry, limit is below
+                        stop_price = float(price_val + args.stop_mult * atr_val)
+                        limit_price = float(max(0.0, price_val - args.limit_mult * atr_val))
+            except Exception:
+                stop_price = None
+                limit_price = None
+
             rows.append({
                 "as_of_date": as_of_date.isoformat() if hasattr(as_of_date, 'isoformat') else str(as_of_date),
                 "target_date": target_date.strftime("%Y-%m-%d") if hasattr(target_date, 'strftime') else str(target_date),
@@ -271,6 +291,8 @@ def main():
                 "prob": prob_row,
                 "val_auc": val_auc,
                 "action": action,
+                "stop_price": stop_price,
+                "limit_price": limit_price,
                 "suggested_size": suggested_size,
                 "copy_trade": copy_trade,
                 "top_feature_contribs": top_feats,
@@ -283,6 +305,55 @@ def main():
     # save contributions as JSON
     contrib_file = out_path.parent / "trade_ready_contribs.json"
     pd.Series(contrib_store).to_json(contrib_file)
+
+    # optionally write a single consensus broker-orders CSV per target date
+    if args.consensus:
+        try:
+            cons_rows = []
+            # group by target_date and aggregate
+            g = out_df.groupby('target_date')
+            for tgt, grp in g:
+                avg_prob = float(grp['prob'].mean())
+                models_included = int(len(grp))
+                # decide consensus action by average probability
+                if avg_prob >= args.buy_threshold:
+                    side = 'BUY'
+                elif avg_prob <= args.sell_threshold:
+                    side = 'SELL'
+                else:
+                    side = 'HOLD'
+
+                # suggested size: mean of sizes for non-HOLD rows, fallback to median overall
+                sizes = grp.loc[grp['action'] != 'HOLD', 'suggested_size']
+                if len(sizes) > 0:
+                    qty = int(max(1, int(sizes.mean())))
+                else:
+                    qty = int(max(1, int(grp['suggested_size'].median())))
+
+                # pick stop/limit by averaging non-null values
+                stop_vals = grp['stop_price'].dropna()
+                limit_vals = grp['limit_price'].dropna()
+                stop_price_cons = float(stop_vals.mean()) if len(stop_vals) > 0 else None
+                limit_price_cons = float(limit_vals.mean()) if len(limit_vals) > 0 else None
+
+                cons_rows.append({
+                    'symbol': args.symbol if args.symbol else '',
+                    'target_date': tgt,
+                    'side': side,
+                    'qty': qty,
+                    'order_type': 'market' if side != 'HOLD' else 'none',
+                    'stop_price': stop_price_cons,
+                    'limit_price': limit_price_cons,
+                    'models_included': models_included,
+                    'avg_prob': avg_prob,
+                })
+
+            cons_df = pd.DataFrame(cons_rows)
+            cons_file = out_path.parent / 'broker_orders_consensus.csv'
+            cons_df.to_csv(cons_file, index=False)
+            print('Wrote consensus broker orders:', cons_file)
+        except Exception as e:
+            warnings.warn(f'Failed to write consensus broker orders: {e}')
 
     print("Wrote:", out_path)
     print("Contributions:", contrib_file)
