@@ -30,4 +30,9 @@ Next steps you might want:
 - Add walk-forward cross-validation and hyperparameter tuning.
 - Expand targets (multi-day return/regression) and include transaction slippage/position sizing.
 - Add an interactive notebook for plotting signals and equity curves (I can add one if you want).
+# IAU workflow and docs
+
+If you have IAU (or another ETF) daily data and want to run the same pipeline, see `docs/IAU_workflow.md` for a step-by-step guide: preparing the CSV, retraining models, generating trade-ready signals, reading outputs, and exporting broker-ready orders.
+
+You can also run the tools in this repo to produce `figures/trade_ready_signals.csv`, `figures/analysis_summary.csv`, and `figures/broker_orders.csv` for quick manual copy-trading.
 # auto
