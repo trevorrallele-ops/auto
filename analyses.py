@@ -15,24 +15,27 @@ from __future__ import annotations
 import os
 import glob
 import json
-from pprint import pprint
+from typing import List, Dict, Any, Tuple
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-import joblib
 from sklearn.base import clone
 
 from features import prepare_features
 from backtest import backtest_advanced
+from config import TRADING_DAYS_PER_YEAR, FIGURES_DIR, MODELS_DIR
+from utils import ensure_dir, safe_model_load, logger
 
 
-def ensure_dir(path: str):
-    os.makedirs(path, exist_ok=True)
 
 
-def backtest_position(prices: pd.Series, position: pd.Series, transaction_cost: float = 0.0005, slippage: float = 0.0005):
+
+def backtest_position(prices: pd.Series, position: pd.Series, transaction_cost: float = 0.0005, slippage: float = 0.0005) -> Tuple[pd.DataFrame, Dict[str, float]]:
+    """Backtest given daily position weights with validation."""
+    if len(prices) == 0 or len(position) == 0:
+        raise ValueError("Prices and position cannot be empty")
     """Backtest given daily position weights (can be fractional). Returns df and perf."""
     prices = prices.sort_index()
     position = position.reindex(prices.index).fillna(0).astype(float)
@@ -42,15 +45,20 @@ def backtest_position(prices: pd.Series, position: pd.Series, transaction_cost: 
     pnl = pnl - turnover * (transaction_cost + slippage)
     cum = (1 + pnl).cumprod()
     total_return = cum.iloc[-1] - 1
-    ann_ret = (1 + total_return) ** (252 / len(pnl)) - 1 if len(pnl) > 0 else np.nan
-    ann_vol = pnl.std() * np.sqrt(252)
+    ann_ret = (1 + total_return) ** (TRADING_DAYS_PER_YEAR / len(pnl)) - 1 if len(pnl) > 0 else np.nan
+    ann_vol = pnl.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
     sharpe = ann_ret / ann_vol if ann_vol != 0 else np.nan
     df = pd.DataFrame({"price": prices, "position": position, "pnl": pnl, "cum": cum})
     perf = {"total_return": float(total_return), "ann_ret": float(ann_ret), "ann_vol": float(ann_vol), "sharpe": float(sharpe)}
     return df, perf
 
 
-def permutation_test(price: pd.Series, signal: pd.Series, n_iter: int = 2000, seed: int = 42):
+def permutation_test(price: pd.Series, signal: pd.Series, n_iter: int = 2000, seed: int = 42) -> Tuple[float, np.ndarray, float]:
+    """Permutation test with validation."""
+    if len(price) == 0 or len(signal) == 0:
+        raise ValueError("Price and signal cannot be empty")
+    if n_iter < 100:
+        raise ValueError("n_iter must be at least 100")
     """Shuffle the signal and compute distribution of total returns; return p-value."""
     rng = np.random.default_rng(seed)
     observed_df, observed_perf = backtest_position(price, signal)
@@ -66,7 +74,10 @@ def permutation_test(price: pd.Series, signal: pd.Series, n_iter: int = 2000, se
     return obs, sims, pval
 
 
-def walk_forward_cv(csv: str = "GLD_daily.csv", estimator_name: str = "mlp", n_splits: int = 5):
+def walk_forward_cv(csv: str = "GLD_daily.csv", estimator_name: str = "mlp", n_splits: int = 5) -> List[Dict[str, Any]]:
+    """Walk-forward cross-validation with validation."""
+    if n_splits < 2:
+        raise ValueError("n_splits must be at least 2")
     """Run TimeSeriesSplit walk-forward CV using saved model type name; retrains model on each fold and collects P&L."""
     X, y, df = prepare_features(csv)
     tss = pd.Series(index=X.index)
@@ -81,7 +92,7 @@ def walk_forward_cv(csv: str = "GLD_daily.csv", estimator_name: str = "mlp", n_s
     tscv = TimeSeriesSplit(n_splits=n_splits)
     per_fold = []
     fold_idx = 0
-    ensure_dir('figures/wfcv')
+    ensure_dir(f'{FIGURES_DIR}/wfcv')
     for train_idx, test_idx in tscv.split(X):
         fold_idx += 1
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
@@ -97,8 +108,8 @@ def walk_forward_cv(csv: str = "GLD_daily.csv", estimator_name: str = "mlp", n_s
         price = df[price_col].loc[X_test.index]
         bt_df, perf = backtest_position(price, sig)
         # save fold-level pnl series
-        bt_df.to_csv(f'figures/wfcv_fold_{fold_idx}.csv')
-        per_fold.append({"fold": fold_idx, **perf, "pnl_file": f'figures/wfcv_fold_{fold_idx}.csv'})
+        bt_df.to_csv(f'{FIGURES_DIR}/wfcv_fold_{fold_idx}.csv')
+        per_fold.append({"fold": fold_idx, **perf, "pnl_file": f'{FIGURES_DIR}/wfcv_fold_{fold_idx}.csv'})
     return per_fold
 
 
@@ -109,8 +120,13 @@ def profit_contribution(bt_df: pd.DataFrame, top_n: int = 20):
     return top, top.sum(), daily.sum()
 
 
-def calibration_analysis(y_true: pd.Series, proba: np.ndarray, bins: int = 10, out_prefix: str = "figures/analysis_calib"):
-    ensure_dir(os.path.dirname(out_prefix) or "figures")
+def calibration_analysis(y_true: pd.Series, proba: np.ndarray, bins: int = 10, out_prefix: str = f"{FIGURES_DIR}/analysis_calib") -> pd.DataFrame:
+    """Calibration analysis with validation."""
+    if len(y_true) == 0 or len(proba) == 0:
+        raise ValueError("Input data cannot be empty")
+    if len(y_true) != len(proba):
+        raise ValueError("y_true and proba must have same length")
+    ensure_dir(os.path.dirname(out_prefix) or FIGURES_DIR)
 
     df = pd.DataFrame({"y": y_true, "p": proba}, index=y_true.index)
     df["bin"] = pd.qcut(df["p"], q=bins, duplicates='drop')
@@ -128,10 +144,15 @@ def calibration_analysis(y_true: pd.Series, proba: np.ndarray, bins: int = 10, o
     return agg
 
 
-def vol_sizing_signal_backtest(price: pd.Series, signal: pd.Series, window: int = 20, target_annual_vol: float = 0.08):
+def vol_sizing_signal_backtest(price: pd.Series, signal: pd.Series, window: int = 20, target_annual_vol: float = 0.08) -> Tuple[pd.DataFrame, Dict[str, float]]:
+    """Volatility sizing backtest with validation."""
+    if len(price) == 0 or len(signal) == 0:
+        raise ValueError("Price and signal cannot be empty")
+    if window < 5:
+        raise ValueError("Window must be at least 5")
     """Compute position sizes based on rolling realized vol and backtest the scaled positions."""
     ret = price.pct_change().fillna(0)
-    realized_vol = ret.rolling(window).std() * np.sqrt(252)
+    realized_vol = ret.rolling(window).std() * np.sqrt(TRADING_DAYS_PER_YEAR)
     size = target_annual_vol / (realized_vol + 1e-9)
     size = size.clip(0, 2.0)  # cap leverage
     # position is signal (0/1) times size shifted to use previous vol
@@ -140,7 +161,8 @@ def vol_sizing_signal_backtest(price: pd.Series, signal: pd.Series, window: int 
     return df, perf
 
 
-def ensemble_eval(csv: str = "GLD_daily.csv"):
+def ensemble_eval(csv: str = "GLD_daily.csv") -> Tuple[Dict[str, float], pd.DataFrame, pd.DataFrame]:
+    """Ensemble evaluation with validation."""
     X, y, df = prepare_features(csv)
     split = int(len(X) * 0.8)
     X_test = X.iloc[split:]
@@ -148,11 +170,13 @@ def ensemble_eval(csv: str = "GLD_daily.csv"):
     price_col = "Adj Close" if "Adj Close" in df.columns else "Close"
     price = df[price_col].loc[X_test.index]
 
-    model_files = glob.glob("models/*.joblib")
+    model_files = glob.glob(f"{MODELS_DIR}/*.joblib")
+    if not model_files:
+        raise RuntimeError("No model files found in models/ directory")
     probs = {}
     for mf in model_files:
         name = os.path.splitext(os.path.basename(mf))[0]
-        mdl = joblib.load(mf)
+        mdl = safe_model_load(mf)
         if hasattr(mdl, "predict_proba"):
             proba = mdl.predict_proba(X_test)[:, 1]
             probs[name] = proba
@@ -164,16 +188,16 @@ def ensemble_eval(csv: str = "GLD_daily.csv"):
     signal = (avg_proba > 0.5).astype(int)
     bt_df, perf = backtest_position(price, pd.Series(signal, index=X_test.index))
     # calibration for ensemble
-    calib = calibration_analysis(y_test, avg_proba, bins=10, out_prefix="figures/analysis_ensemble_calib")
-    ensure_dir("figures")
-    proba_df.to_csv("figures/analysis_ensemble_model_probs.csv")
-    with open("figures/analysis_ensemble_perf.json", "w") as f:
+    calib = calibration_analysis(y_test, avg_proba, bins=10, out_prefix=f"{FIGURES_DIR}/analysis_ensemble_calib")
+    ensure_dir(FIGURES_DIR)
+    proba_df.to_csv(f"{FIGURES_DIR}/analysis_ensemble_model_probs.csv")
+    with open(f"{FIGURES_DIR}/analysis_ensemble_perf.json", "w") as f:
         json.dump(perf, f, indent=2)
     # also append ensemble metrics to a summary CSV if results_summary exists
     # also append ensemble metrics to a summary CSV (merge with results_summary if present)
     try:
-        if os.path.exists('figures/results_summary.csv'):
-            base = pd.read_csv('figures/results_summary.csv', index_col=0)
+        if os.path.exists(f'{FIGURES_DIR}/results_summary.csv'):
+            base = pd.read_csv(f'{FIGURES_DIR}/results_summary.csv', index_col=0)
         else:
             base = pd.DataFrame()
         ens_row = pd.Series(perf, name='ensemble')
@@ -184,27 +208,28 @@ def ensemble_eval(csv: str = "GLD_daily.csv"):
                 base[c] = pd.NA
         # if base has extra columns, keep them but fill missing with NA for ensemble
         base.loc['ensemble'] = [ens_row.get(c, pd.NA) for c in base.columns]
-        base.to_csv('figures/analysis_summary.csv')
+        base.to_csv(f'{FIGURES_DIR}/analysis_summary.csv')
     except Exception as e:
-        print('Failed to update analysis_summary.csv:', e)
+        logger.warning(f'Failed to update analysis_summary.csv: {e}')
     return perf, bt_df, calib
 
 
-def run_all(csv: str = "GLD_daily.csv"):
-    ensure_dir("figures")
-    print("Running ensemble evaluation...")
+def run_all(csv: str = "GLD_daily.csv") -> None:
+    """Run all analyses with proper error handling."""
+    ensure_dir(FIGURES_DIR)
+    logger.info("Running ensemble evaluation...")
     try:
         perf, bt_df, calib = ensemble_eval(csv)
-        print("Ensemble perf:", perf)
+        logger.info(f"Ensemble perf: {perf}")
     except Exception as e:
-        print("Ensemble failed:", e)
+        logger.error(f"Ensemble failed: {e}")
 
     # diagnose MLP signal permutation test
-    print("Running MLP permutation test...")
-    mdl_path = "models/mlp.joblib"
+    logger.info("Running MLP permutation test...")
+    mdl_path = f"{MODELS_DIR}/mlp.joblib"
     if os.path.exists(mdl_path):
-        print("Loading MLP")
-        mdl = joblib.load(mdl_path)
+        logger.info("Loading MLP")
+        mdl = safe_model_load(mdl_path)
         X, y, df = prepare_features(csv)
         split = int(len(X) * 0.8)
         X_test = X.iloc[split:]
@@ -214,7 +239,7 @@ def run_all(csv: str = "GLD_daily.csv"):
         proba = mdl.predict_proba(X_test)[:, 1] if hasattr(mdl, "predict_proba") else None
         signal = pd.Series((proba > 0.5).astype(int) if proba is not None else mdl.predict(X_test), index=X_test.index)
         obs, sims, pval = permutation_test(price, signal, n_iter=2000)
-        print(f"MLP observed total_return={obs:.4f}, permutation p-value={pval:.4f}")
+        logger.info(f"MLP observed total_return={obs:.4f}, permutation p-value={pval:.4f}")
         # save sim histogram
         plt.figure(figsize=(6, 3))
         plt.hist(sims, bins=50)
@@ -222,55 +247,55 @@ def run_all(csv: str = "GLD_daily.csv"):
         plt.legend()
         plt.title('Permutation distribution of total_return (MLP)')
         plt.tight_layout()
-        plt.savefig('figures/analysis_mlp_permutation.png')
+        plt.savefig(f'{FIGURES_DIR}/analysis_mlp_permutation.png')
         plt.close()
 
     # nested walk-forward CV aggregated across multiple models
-    print("Running nested walk-forward CV across all classifiers...")
+    logger.info("Running nested walk-forward CV across all classifiers...")
     try:
         from models import build_classifiers
         clf_map = build_classifiers()
         all_wfcv = []
         for name in clf_map.keys():
             try:
-                print(f"WFCV for {name}...")
+                logger.info(f"WFCV for {name}...")
                 per_fold = walk_forward_cv(csv, estimator_name=name, n_splits=5)
                 for r in per_fold:
                     r['model'] = name
                 all_wfcv.extend(per_fold)
             except Exception as e:
-                print(f"WFCV failed for {name}: {e}")
+                logger.warning(f"WFCV failed for {name}: {e}")
         if all_wfcv:
             df_wfcv = pd.DataFrame(all_wfcv)
-            df_wfcv.to_csv('figures/analysis_all_models_walkforward.csv', index=False)
-            print('Saved aggregated walk-forward CV to figures/analysis_all_models_walkforward.csv')
+            df_wfcv.to_csv(f'{FIGURES_DIR}/analysis_all_models_walkforward.csv', index=False)
+            logger.info(f'Saved aggregated walk-forward CV to {FIGURES_DIR}/analysis_all_models_walkforward.csv')
     except Exception as e:
-        print('Nested walk-forward CV failed:', e)
+        logger.error(f'Nested walk-forward CV failed: {e}')
 
     # profit contribution for ensemble
     try:
-        ensemble_perf_file = 'figures/analysis_ensemble_perf.json'
+        ensemble_perf_file = f'{FIGURES_DIR}/analysis_ensemble_perf.json'
         if os.path.exists(ensemble_perf_file):
-            print('Analyzing ensemble profit contributors...')
+            logger.info('Analyzing ensemble profit contributors...')
             # reload ensemble backtest to compute daily pnl
             _, bt_df, _ = ensemble_eval(csv)
             top, top_sum, total = profit_contribution(bt_df, top_n=20)
-            top.to_csv('figures/analysis_ensemble_top_contributors.csv')
-            print('Top contributors saved to figures/analysis_ensemble_top_contributors.csv')
+            top.to_csv(f'{FIGURES_DIR}/analysis_ensemble_top_contributors.csv')
+            logger.info(f'Top contributors saved to {FIGURES_DIR}/analysis_ensemble_top_contributors.csv')
     except Exception as e:
-        print('Profit contribution analysis failed:', e)
+        logger.error(f'Profit contribution analysis failed: {e}')
 
     # volatility sizing backtest using MLP signal
     try:
         if os.path.exists(mdl_path):
-            print('Vol-sizing backtest (MLP)')
+            logger.info('Vol-sizing backtest (MLP)')
             df_vol, perf_vol = vol_sizing_signal_backtest(price, signal, window=20, target_annual_vol=0.08)
-            df_vol.to_csv('figures/analysis_mlp_volsizing.csv')
-            with open('figures/analysis_mlp_volsizing_perf.json', 'w') as f:
+            df_vol.to_csv(f'{FIGURES_DIR}/analysis_mlp_volsizing.csv')
+            with open(f'{FIGURES_DIR}/analysis_mlp_volsizing_perf.json', 'w') as f:
                 json.dump(perf_vol, f, indent=2)
-            print('Saved vol sizing results')
+            logger.info('Saved vol sizing results')
     except Exception as e:
-        print('Vol sizing backtest failed:', e)
+        logger.error(f'Vol sizing backtest failed: {e}')
 
 
 if __name__ == '__main__':

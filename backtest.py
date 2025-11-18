@@ -7,9 +7,18 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from typing import Tuple, Dict, Optional
+
+from config import TRADING_DAYS_PER_YEAR, DEFAULT_TRANSACTION_COST, DEFAULT_SLIPPAGE, DEFAULT_LEVERAGE
+from utils import safe_divide, validate_numeric_range, logger
 
 
-def backtest_signals(prices: pd.Series, signals: pd.Series, transaction_cost: float = 0.0):
+def backtest_signals(prices: pd.Series, signals: pd.Series, transaction_cost: float = DEFAULT_TRANSACTION_COST) -> Tuple[pd.DataFrame, Dict[str, float]]:
+    """Backtest signals with validation and proper error handling."""
+    if len(prices) == 0 or len(signals) == 0:
+        raise ValueError("Prices and signals cannot be empty")
+    
+    transaction_cost = validate_numeric_range(transaction_cost, 0.0, 0.1, "transaction_cost")
     """Return DataFrame with daily strategy returns and performance metrics.
 
     prices: pd.Series indexed by date
@@ -27,10 +36,10 @@ def backtest_signals(prices: pd.Series, signals: pd.Series, transaction_cost: fl
     strat_ret = strat_ret - trades * transaction_cost
     cum = (1 + strat_ret).cumprod()
     total_return = cum.iloc[-1] - 1
-    # annualized metrics (assume daily data ~252 trading days)
-    ann_ret = (1 + total_return) ** (252 / len(strat_ret)) - 1 if len(strat_ret) > 0 else np.nan
-    ann_vol = strat_ret.std() * np.sqrt(252)
-    sharpe = ann_ret / ann_vol if ann_vol != 0 else np.nan
+    # annualized metrics
+    ann_ret = (1 + total_return) ** (TRADING_DAYS_PER_YEAR / len(strat_ret)) - 1 if len(strat_ret) > 0 else np.nan
+    ann_vol = strat_ret.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
+    sharpe = safe_divide(ann_ret, ann_vol, np.nan)
 
     out = pd.DataFrame({"price": prices, "signal": signals, "strat_return": strat_ret, "cum": cum})
     perf = {"total_return": float(total_return), "ann_ret": float(ann_ret), "ann_vol": float(ann_vol), "sharpe": float(sharpe)}
@@ -39,14 +48,27 @@ def backtest_signals(prices: pd.Series, signals: pd.Series, transaction_cost: fl
 
 def backtest_advanced(prices: pd.Series,
                       signals: pd.Series,
-                      prob: pd.Series | None = None,
-                      transaction_cost: float = 0.0005,
-                      slippage: float = 0.0005,
-                      leverage: float = 1.0,
+                      prob: Optional[pd.Series] = None,
+                      transaction_cost: float = DEFAULT_TRANSACTION_COST,
+                      slippage: float = DEFAULT_SLIPPAGE,
+                      leverage: float = DEFAULT_LEVERAGE,
                       long_short: bool = False,
                       sizing_method: str = "proportional",
-                      volatility_target: float | None = None,
-                      stop_loss: float | None = None):
+                      volatility_target: Optional[float] = None,
+                      stop_loss: Optional[float] = None) -> Tuple[pd.DataFrame, Dict[str, float]]:
+    """Advanced backtest with validation and proper error handling."""
+    if len(prices) == 0 or len(signals) == 0:
+        raise ValueError("Prices and signals cannot be empty")
+    
+    # Validate parameters
+    transaction_cost = validate_numeric_range(transaction_cost, 0.0, 0.1, "transaction_cost")
+    slippage = validate_numeric_range(slippage, 0.0, 0.1, "slippage")
+    leverage = validate_numeric_range(leverage, 0.1, 10.0, "leverage")
+    
+    if volatility_target is not None:
+        volatility_target = validate_numeric_range(volatility_target, 0.01, 1.0, "volatility_target")
+    if stop_loss is not None:
+        stop_loss = validate_numeric_range(stop_loss, 0.001, 0.5, "stop_loss")
     """More realistic daily backtest.
 
     - signals: expected to be in {-1,0,1} for short/flat/long if long_short True, else {0,1}
@@ -75,7 +97,7 @@ def backtest_advanced(prices: pd.Series,
     if volatility_target is not None:
         # use realized vol to scale position
         ret_series = prices.pct_change().fillna(0)
-        realized_vol = ret_series.rolling(14).std() * (252 ** 0.5)
+        realized_vol = ret_series.rolling(14).std() * (TRADING_DAYS_PER_YEAR ** 0.5)
         size = (volatility_target / (realized_vol + 1e-9)).clip(0, leverage)
         position = pos * size
     else:
@@ -115,9 +137,9 @@ def backtest_advanced(prices: pd.Series,
 
     cum = (1 + strat_ret).cumprod()
     total_return = cum.iloc[-1] - 1
-    ann_ret = (1 + total_return) ** (252 / len(strat_ret)) - 1 if len(strat_ret) > 0 else float("nan")
-    ann_vol = strat_ret.std() * (252 ** 0.5)
-    sharpe = ann_ret / ann_vol if ann_vol != 0 else float("nan")
+    ann_ret = (1 + total_return) ** (TRADING_DAYS_PER_YEAR / len(strat_ret)) - 1 if len(strat_ret) > 0 else float("nan")
+    ann_vol = strat_ret.std() * (TRADING_DAYS_PER_YEAR ** 0.5)
+    sharpe = safe_divide(ann_ret, ann_vol, float("nan"))
 
     out = pd.DataFrame({"price": prices, "signal": signals, "position": position, "strat_return": strat_ret, "cum": cum})
     perf = {"total_return": float(total_return), "ann_ret": float(ann_ret), "ann_vol": float(ann_vol), "sharpe": float(sharpe)}

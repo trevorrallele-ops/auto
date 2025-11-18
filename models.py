@@ -5,7 +5,7 @@ The module keeps imports lightweight at module import time and guards heavy libs
 from __future__ import annotations
 
 import warnings
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 
 import numpy as np
 import pandas as pd
@@ -17,6 +17,9 @@ from sklearn.svm import SVC
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import accuracy_score, roc_auc_score, f1_score, precision_score, recall_score
+
+from config import RANDOM_STATE
+from utils import logger
 
 warnings.filterwarnings("ignore")
 
@@ -39,7 +42,7 @@ def _safe_import_lightgbm():
         return None
 
 
-def build_classifiers(random_state: int = 42) -> Dict[str, Any]:
+def build_classifiers(random_state: int = RANDOM_STATE) -> Dict[str, Any]:
     models = {}
     models["logistic"] = Pipeline([("scaler", StandardScaler()), ("clf", LogisticRegression())])
     models["rf"] = Pipeline([("scaler", StandardScaler()), ("clf", RandomForestClassifier(n_estimators=100, random_state=random_state))])
@@ -63,25 +66,36 @@ def build_classifiers(random_state: int = 42) -> Dict[str, Any]:
 
 
 def evaluate_model(model, X_test: pd.DataFrame, y_test: pd.Series) -> Dict[str, float]:
-    y_pred = model.predict(X_test)
-    out = {
-        "accuracy": float(accuracy_score(y_test, y_pred)),
-        "f1": float(f1_score(y_test, y_pred)),
-        "precision": float(precision_score(y_test, y_pred)),
-        "recall": float(recall_score(y_test, y_pred)),
-    }
-    if hasattr(model, "predict_proba"):
-        try:
-            proba = model.predict_proba(X_test)[:, 1]
-            out["auc"] = float(roc_auc_score(y_test, proba))
-        except Exception:
+    """Evaluate model with proper error handling."""
+    try:
+        y_pred = model.predict(X_test)
+        out = {
+            "accuracy": float(accuracy_score(y_test, y_pred)),
+            "f1": float(f1_score(y_test, y_pred, zero_division=0)),
+            "precision": float(precision_score(y_test, y_pred, zero_division=0)),
+            "recall": float(recall_score(y_test, y_pred, zero_division=0)),
+        }
+        if hasattr(model, "predict_proba"):
+            try:
+                proba = model.predict_proba(X_test)[:, 1]
+                out["auc"] = float(roc_auc_score(y_test, proba))
+            except Exception as e:
+                logger.warning(f"AUC calculation failed: {e}")
+                out["auc"] = np.nan
+        else:
             out["auc"] = np.nan
-    else:
-        out["auc"] = np.nan
-    return out
+        return out
+    except Exception as e:
+        logger.error(f"Model evaluation failed: {e}")
+        raise
 
 
-def train_and_evaluate(X_train, y_train, X_test, y_test, random_state: int = 42):
+def train_and_evaluate(X_train: pd.DataFrame, y_train: pd.Series, X_test: pd.DataFrame, y_test: pd.Series, random_state: int = RANDOM_STATE) -> Tuple[Dict[str, Any], Dict[str, Dict[str, float]]]:
+    """Train and evaluate models with proper validation."""
+    if len(X_train) == 0 or len(X_test) == 0:
+        raise ValueError("Training or test data is empty")
+    if X_train.shape[1] != X_test.shape[1]:
+        raise ValueError("Training and test data have different number of features")
     models = build_classifiers(random_state=random_state)
     results = {}
     trained = {}
@@ -93,7 +107,8 @@ def train_and_evaluate(X_train, y_train, X_test, y_test, random_state: int = 42)
             trained[name] = clf
             print(f"Trained {name}: acc={metrics['accuracy']:.3f} f1={metrics['f1']:.3f} auc={metrics.get('auc')}")
         except Exception as e:
-            print(f"Failed {name}: {e}")
+            logger.error(f"Failed training {name}: {e}")
+            continue
     return trained, results
 
 

@@ -9,13 +9,25 @@ from __future__ import annotations
 
 import pandas as pd
 import numpy as np
+from typing import Tuple
+
+from config import *
+from utils import validate_file_path, validate_csv_data, logger
 
 
 def load_data(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, parse_dates=[0])
-    df.rename(columns={df.columns[0]: "Date"}, inplace=True)
-    df.set_index("Date", inplace=True)
-    return df.sort_index()
+    """Load and validate CSV data with proper error handling."""
+    try:
+        validated_path = validate_file_path(path)
+        df = pd.read_csv(validated_path, parse_dates=[0])
+        df.rename(columns={df.columns[0]: "Date"}, inplace=True)
+        df.set_index("Date", inplace=True)
+        validate_csv_data(df)
+        logger.info(f"Loaded {len(df)} rows from {path}")
+        return df.sort_index()
+    except Exception as e:
+        logger.error(f"Failed to load data from {path}: {e}")
+        raise
 
 
 def sma(series: pd.Series, window: int) -> pd.Series:
@@ -26,7 +38,7 @@ def ema(series: pd.Series, window: int) -> pd.Series:
     return series.ewm(span=window, adjust=False).mean()
 
 
-def rsi(series: pd.Series, window: int = 14) -> pd.Series:
+def rsi(series: pd.Series, window: int = RSI_WINDOW) -> pd.Series:
     delta = series.diff()
     up = delta.clip(lower=0)
     down = -1 * delta.clip(upper=0)
@@ -36,7 +48,7 @@ def rsi(series: pd.Series, window: int = 14) -> pd.Series:
     return 100 - (100 / (1 + rs))
 
 
-def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
+def macd(series: pd.Series, fast: int = MACD_FAST, slow: int = MACD_SLOW, signal: int = MACD_SIGNAL):
     fast_ema = ema(series, fast)
     slow_ema = ema(series, slow)
     macd_line = fast_ema - slow_ema
@@ -45,7 +57,7 @@ def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
     return macd_line, signal_line, hist
 
 
-def bollinger_bands(series: pd.Series, window: int = 20, n_std: int = 2):
+def bollinger_bands(series: pd.Series, window: int = BB_WINDOW, n_std: int = BB_STD):
     ma = series.rolling(window).mean()
     std = series.rolling(window).std()
     upper = ma + n_std * std
@@ -53,7 +65,7 @@ def bollinger_bands(series: pd.Series, window: int = 20, n_std: int = 2):
     return upper, lower
 
 
-def atr(df: pd.DataFrame, window: int = 14) -> pd.Series:
+def atr(df: pd.DataFrame, window: int = ATR_WINDOW) -> pd.Series:
     # require High, Low, Close
     high = df.get("High")
     low = df.get("Low")
@@ -76,7 +88,7 @@ def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["sma_10"] = sma(price, 10)
     df["ema_12"] = ema(price, 12)
     df["ema_26"] = ema(price, 26)
-    df["rsi_14"] = rsi(price, 14)
+    df["rsi_14"] = rsi(price, RSI_WINDOW)
     macd_line, signal_line, hist = macd(price)
     df["macd"] = macd_line
     df["macd_signal"] = signal_line
@@ -84,7 +96,7 @@ def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     bb_up, bb_low = bollinger_bands(price)
     df["bb_upper"] = bb_up
     df["bb_lower"] = bb_low
-    df["atr_14"] = atr(df, 14)
+    df["atr_14"] = atr(df, ATR_WINDOW)
     # percentage distance from bands
     df["bb_pct"] = (price - df["bb_lower"]) / (df["bb_upper"] - df["bb_lower"])
 
@@ -97,7 +109,10 @@ def add_technical_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def prepare_features(path: str, target_horizon: int = 1):
+def prepare_features(path: str, target_horizon: int = 1) -> Tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
+    """Prepare features with validation and proper error handling."""
+    if target_horizon < 1:
+        raise ValueError("target_horizon must be >= 1")
     df = load_data(path)
     df = add_technical_indicators(df)
     price = df.get("Adj Close") if "Adj Close" in df.columns else df.get("Close")

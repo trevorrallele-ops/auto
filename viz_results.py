@@ -18,7 +18,8 @@ import pandas as pd
 from features import prepare_features
 from models import train_and_evaluate
 from backtest import backtest_signals, backtest_advanced
-import joblib
+from config import TRAIN_TEST_SPLIT, FIGURES_DIR, MODELS_DIR
+from utils import ensure_dir, safe_model_load, safe_model_save, logger
 import glob
 
 
@@ -27,9 +28,7 @@ def time_train_test_split_indices(n: int, train_frac: float = 0.8):
     return split
 
 
-def ensure_dir(path: str):
-    if not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
+
 
 
 def plot_metrics_table(summary: dict, out_path: str):
@@ -72,18 +71,22 @@ def run(path: str = "GLD_daily.csv", full_retrain: bool = False):
     print("Train/Test sizes:", X_train.shape[0], X_test.shape[0])
 
     # Ensure models dir exists
-    os.makedirs("models", exist_ok=True)
+    ensure_dir(MODELS_DIR)
 
     # Prefer loading saved models from models/ if present
     trained = {}
     results = {}
-    model_files = glob.glob("models/*.joblib")
+    model_files = glob.glob(f"{MODELS_DIR}/*.joblib")
     if model_files and not full_retrain:
         print("Found saved models in models/ — loading them for visualization")
         for mf in model_files:
             name = os.path.splitext(os.path.basename(mf))[0]
             try:
-                mdl = joblib.load(mf)
+                try:
+                mdl = safe_model_load(mf)
+            except Exception as e:
+                logger.warning(f"Failed to load model {mf}: {e}")
+                continue
                 trained[name] = mdl
             except Exception as e:
                 print(f"Failed to load {mf}: {e}")
@@ -121,17 +124,17 @@ def run(path: str = "GLD_daily.csv", full_retrain: bool = False):
         # save each trained model to models/
         for name, mdl in trained_all.items():
             try:
-                joblib.dump(mdl, f"models/{name}.joblib")
-                print(f"Saved model: models/{name}.joblib")
+                safe_model_save(mdl, f"{MODELS_DIR}/{name}.joblib")
+                logger.info(f"Saved model: {MODELS_DIR}/{name}.joblib")
             except Exception as e:
-                print(f"Failed to save model {name}: {e}")
+                logger.error(f"Failed to save model {name}: {e}")
         trained.update(trained_all)
         results.update(results_all)
 
     price_col = "Adj Close" if "Adj Close" in df.columns else "Close"
     price = df[price_col].loc[X_test.index]
 
-    ensure_dir("figures")
+    ensure_dir(FIGURES_DIR)
 
     equities = {}
     combined_summary = {}
@@ -156,21 +159,21 @@ def run(path: str = "GLD_daily.csv", full_retrain: bool = False):
             tot = perf.get('total_return', float('nan'))
             print(f"{name}: acc={acc:.3f} sharpe={sharpe:.3f} total_return={tot:.3f}")
         except Exception as e:
-            print(f"Failed plotting/backtest for {name}: {e}")
+            logger.warning(f"Failed plotting/backtest for {name}: {e}")
 
     # save combined summary
     summary_df = pd.DataFrame(combined_summary).T
-    summary_df.to_csv("figures/results_summary.csv")
+    summary_df.to_csv(f"{FIGURES_DIR}/results_summary.csv")
 
     # plots
-    plot_metrics_table(combined_summary, "figures/metrics_heatmap.png")
-    plot_equity_curves(equities, "figures/equity_curves.png")
+    plot_metrics_table(combined_summary, f"{FIGURES_DIR}/metrics_heatmap.png")
+    plot_equity_curves(equities, f"{FIGURES_DIR}/equity_curves.png")
 
     # Save JSON too
-    with open("figures/results_summary.json", "w") as f:
+    with open(f"{FIGURES_DIR}/results_summary.json", "w") as f:
         json.dump(combined_summary, f, indent=2)
 
-    print("Saved figures to figures/ and summary to figures/results_summary.csv")
+    logger.info(f"Saved figures to {FIGURES_DIR}/ and summary to {FIGURES_DIR}/results_summary.csv")
 
 
 if __name__ == "__main__":
@@ -181,6 +184,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if not os.path.exists(args.csv):
-        print(f"CSV not found: {args.csv}. Please place GLD_daily.csv in the working folder.")
+        logger.error(f"CSV not found: {args.csv}. Please place GLD_daily.csv in the working folder.")
     else:
         run(args.csv, full_retrain=args.full_retrain)

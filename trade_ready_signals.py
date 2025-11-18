@@ -15,7 +15,6 @@ import os
 import warnings
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 
@@ -25,10 +24,11 @@ from pandas.tseries.offsets import BDay
 
 from features import prepare_features
 from models import build_classifiers
+from config import BUY_THRESHOLD, SELL_THRESHOLD, MODELS_DIR, FIGURES_DIR
+from utils import safe_model_load, safe_model_save, ensure_dir, validate_numeric_range, logger
 
 
-def ensure_dir(p):
-    Path(p).parent.mkdir(parents=True, exist_ok=True)
+
 
 
 def get_target_column(df):
@@ -113,8 +113,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("csv", help="CSV file with historical data (daily).")
     parser.add_argument("--horizons", nargs="+", type=int, default=[1], help="Target horizons in days (1,2,...)")
-    parser.add_argument("--buy-threshold", type=float, default=0.55, help="Probability threshold above which to suggest BUY")
-    parser.add_argument("--sell-threshold", type=float, default=0.45, help="Probability threshold below which to suggest SELL")
+    parser.add_argument("--buy-threshold", type=float, default=BUY_THRESHOLD, help="Probability threshold above which to suggest BUY")
+    parser.add_argument("--sell-threshold", type=float, default=SELL_THRESHOLD, help="Probability threshold below which to suggest SELL")
     parser.add_argument("--size", type=int, default=100, help="Suggested number of shares for copy-trade helper")
     parser.add_argument("--size-mode", choices=["fixed","vol"], default="fixed", help="Sizing mode: fixed shares or volatility-based (uses ATR)")
     parser.add_argument("--equity", type=float, default=100000.0, help="Account equity used for vol-based sizing")
@@ -131,7 +131,7 @@ def main():
     args = parser.parse_args()
 
     out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    ensure_dir(out_path.parent)
 
     classifiers_template = build_classifiers(random_state=42)
     model_names = args.models if args.models else list(classifiers_template.keys())
@@ -170,11 +170,11 @@ def main():
                 continue
 
             clf_template = classifiers_template[name]
-            model_file = Path(f"models/{name}_h{h}.joblib")
+            model_file = Path(f"{MODELS_DIR}/{name}_h{h}.joblib")
             model = None
             if model_file.exists():
                 try:
-                    model = joblib.load(model_file)
+                    model = safe_model_load(model_file)
                 except Exception as e:
                     warnings.warn(f"Failed to load {model_file}: {e}")
 
@@ -184,7 +184,7 @@ def main():
                     model = clf_template
                     model.fit(X_train, y_train)
                     ensure_dir(model_file)
-                    joblib.dump(model, model_file)
+                    safe_model_save(model, model_file)
                 else:
                     print(f"Model file {model_file} missing; skipping {name} for horizon {h} (use --train-if-missing to train)")
                     continue
@@ -304,7 +304,11 @@ def main():
     out_df.to_csv(out_path, index=False)
     # save contributions as JSON
     contrib_file = out_path.parent / "trade_ready_contribs.json"
-    pd.Series(contrib_store).to_json(contrib_file)
+    try:
+        pd.Series(contrib_store).to_json(contrib_file)
+        logger.info(f"Saved contributions to {contrib_file}")
+    except Exception as e:
+        logger.error(f"Failed to save contributions: {e}")
 
     # optionally write a single consensus broker-orders CSV per target date
     if args.consensus:
@@ -351,13 +355,13 @@ def main():
             cons_df = pd.DataFrame(cons_rows)
             cons_file = out_path.parent / 'broker_orders_consensus.csv'
             cons_df.to_csv(cons_file, index=False)
-            print('Wrote consensus broker orders:', cons_file)
+            logger.info(f'Wrote consensus broker orders: {cons_file}')
         except Exception as e:
-            warnings.warn(f'Failed to write consensus broker orders: {e}')
+            logger.warning(f'Failed to write consensus broker orders: {e}')
 
-    print("Wrote:", out_path)
-    print("Contributions:", contrib_file)
-    print(out_df)
+    logger.info(f"Wrote: {out_path}")
+    logger.info(f"Contributions: {contrib_file}")
+    logger.info(f"Generated {len(out_df)} signals")
 
 
 if __name__ == '__main__':
